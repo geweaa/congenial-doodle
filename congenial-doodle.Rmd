@@ -1,0 +1,112 @@
+---
+title: "congenial-doodle (P26201, filter holders)"
+author: "George"
+date: '2022-07-12'
+output:
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: spacelab
+    highlight: textmate
+    df_print: paged
+    code_folding: hide
+    self_contained: false
+    keep_md: false
+    encoding: "UTF-8"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+library(tidyverse)
+```
+
+
+```{r themes}
+theme_barplot <- function() {
+  theme(
+    axis.title.x = element_text(colour = "black", size = 8),
+    axis.title.y = element_text(colour = "black", size = 8),
+    axis.text.x = element_text(colour = "black", size = 8),
+    axis.text.y = element_text(colour = "black", size = 8, margin = margin(0,-5,0,0, unit = 'mm')),
+    legend.text = element_text(colour = "black", size = 8),
+    strip.background = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    aspect.ratio = 0.7,
+    strip.text = element_text(colour = "black", size = 8, hjust = 0.5),
+    panel.background = element_blank(),
+    legend.title = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    legend.spacing.x = unit(0.5, 'mm'),
+    panel.border = element_blank(),
+    legend.key.size = unit(4.5, "mm"),
+    legend.box.spacing = unit(1, 'mm'),
+    axis.ticks.y = element_blank()
+  )
+}
+```
+
+
+```{r files}
+seqtab <- read_tsv("filters.tsv", col_types = 
+                     cols(.default = col_character(), 
+                          relab = col_double(),
+                          count = col_integer())) 
+  
+tax <- read_tsv("ASV_tax_species.tsv", col_types = cols(.default = col_character())) %>%
+  rename(seqid = ASV_ID) %>%
+  mutate(Phylum = gsub("Firmicutes_.", "Firmicutes", Phylum))
+
+smd <- read_tsv("filters_md.tsv", col_types = cols(.default = 
+                                                     col_character(),
+                                                   Kreads = col_double()))
+```
+
+
+Two extraction controls were sequenced as a faint band after amplification was detectable. ASVs present in these samples are removed from the other samples
+
+
+```{r controls}
+seqtab %>%
+  filter(sample %in% c("P26201_1052","P26201_1053")) -> aliens
+
+seqtab %>% filter(!seqid %in% aliens$seqid) %>%
+  group_by(sample) %>% mutate(relab = count / sum(count)) %>% ungroup() -> seqtab
+```
+
+
+```{r barplot filters}
+seqtab %>%
+  rbind(aliens) %>%
+  inner_join(tax, by = "seqid") %>%
+  group_by(Phylum, sample) %>%
+  # Sum the abundance of each phylum within a sample
+  summarise(relab = sum(relab), .groups = 'drop_last') %>%
+  # Calculate the mean abundance of each phylum over the categories
+  summarise(mean_relab = sum(relab), .groups = 'drop') %>%
+  filter(!is.na(Phylum)) %>%
+  top_n(11, mean_relab) -> t
+
+tax %>%
+  left_join(t %>% transmute(Phylum, topphylum = Phylum), by = "Phylum") %>%
+  replace_na(list("topphylum" = "Other")) -> taxref
+
+seqtab %>%
+  rbind(aliens) %>%
+  inner_join(taxref, by = "seqid") %>% 
+  inner_join(smd, by = 'sample') %>%
+  # Summarize in order to have the sum for each category and topphylum
+  group_by(topphylum, id) %>% 
+  summarise(relab = sum(relab), .groups = 'drop') %>%
+  # Call the plot
+  ggplot(aes(x = fct_rev(id), y = relab, fill = fct_relevel(topphylum, c("Other")))) +
+  labs(x = '', y = 'Relative abundance') +
+  geom_col() +
+  scale_fill_brewer(palette = 'Paired') +
+  coord_flip() + 
+  scale_y_continuous(trans = 'reverse', labels = c('1.0','0.75','0.50','0.25','0')) +
+  theme_barplot()
+```
